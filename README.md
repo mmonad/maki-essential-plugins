@@ -27,8 +27,7 @@ maki.setup({
 })
 ```
 
-Restart Maki after the first installation. Use
-`/packupdate maki-essential-plugins` to review updates.
+Use `/packupdate maki-essential-plugins` to review updates.
 
 ## Commands and tools
 
