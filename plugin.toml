@@ -2,3 +2,4 @@
 fs_read = true
 fs_write = true
 run = true
+env = true
