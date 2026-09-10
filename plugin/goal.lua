@@ -617,3 +617,9 @@ maki.api.create_autocmd("SessionReset", {
     maki.ui.set_status_hint(nil)
   end,
 })
+
+maki.api.create_autocmd("SessionEnd", {
+  callback = function(event)
+    clear_fences(event.data.session_id)
+  end,
+})

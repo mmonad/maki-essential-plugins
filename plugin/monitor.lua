@@ -1,6 +1,6 @@
 -- Watch a long-running command and let the agent hear about it later.
 --
--- The job outlives the tool call that started it (owner = "plugin"), and
+-- The job outlives the tool call that started it (scope = "plugin"), and
 -- each interesting line goes to the session mailbox instead of being sent
 -- as its own prompt, so a chatty watcher costs nothing until the agent
 -- runs again.
@@ -146,6 +146,7 @@ maki.api.register_tool({
   -- standing grant, because the job outlives the call it was granted to,
   -- and an "always allow" answered for a command that runs once never
   -- agreed to one that keeps running.
+  permission = "run",
   permission_scopes = function(input)
     local command = input.command
     if not command or command:match("^%s*$") then
@@ -184,7 +185,7 @@ maki.api.register_tool({
     }
 
     local id, start_err = maki.fn.jobstart(command, {
-      owner = "plugin",
+      scope = "plugin",
       on_stdout = function(job_id, line)
         local e = monitors[job_id]
         if e then
@@ -299,4 +300,4 @@ local function stop_session(ev)
   end
 end
 
-maki.api.create_autocmd({ "SessionReset" }, { callback = stop_session })
+maki.api.create_autocmd("SessionEnd", { callback = stop_session })
