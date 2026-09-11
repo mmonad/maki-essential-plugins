@@ -96,6 +96,20 @@ local function unescaped_pipe(pattern)
   return false
 end
 
+-- One hint slot serves the whole process, so it counts the monitors of
+-- the session in front of the person and follows focus when that moves.
+local function refresh_hint()
+  local session = maki.session.current()
+  local count = 0
+  for _, entry in pairs(monitors) do
+    if entry.session == session then
+      count = count + 1
+    end
+  end
+  local label = count == 1 and "1 monitor active" or string.format("%d monitors active", count)
+  maki.ui.set_status_hint(count > 0 and { { " " .. label .. " ", "foreground" } } or nil)
+end
+
 -- One Lua runtime serves every session in the UI, so this table holds
 -- other sessions' monitors too and their ids are small integers anyone
 -- could land on. A session may only stop its own: answer for someone
@@ -108,6 +122,7 @@ local function stop(id, session)
   end
   maki.fn.jobstop(id)
   monitors[id] = nil
+  refresh_hint()
   return true
 end
 
@@ -232,6 +247,7 @@ maki.api.register_tool({
             string.format("[%s] exited with %d", e.label, code),
             { session = e.session, wake = e.wake }
           )
+          refresh_hint()
         end
       end,
     })
@@ -250,6 +266,7 @@ maki.api.register_tool({
     end
 
     monitors[id] = entry
+    refresh_hint()
     return string.format("%s watching `%s` (id %d)", entry.label, command, id)
   end,
 })
@@ -327,6 +344,8 @@ local function stop_session(ev)
       monitors[id] = nil
     end
   end
+  refresh_hint()
 end
 
 maki.api.create_autocmd("SessionEnd", { callback = stop_session })
+maki.api.create_autocmd("SessionFocusChanged", { callback = refresh_hint })
