@@ -24,7 +24,8 @@ local SCHEMA = {
     },
     match = {
       type = "string",
-      description = "Lua pattern. When set, only matching lines are reported.",
+      description = "Lua pattern. When set, only matching lines are reported. "
+        .. "Lua has no `|` alternation; write `%|` for a literal pipe.",
     },
     wake = {
       type = "boolean",
@@ -75,6 +76,24 @@ end
 -- someone is reading to decide what to stop.
 local function one_line(s)
   return (tostring(s):gsub("%s+", " "))
+end
+
+-- Lua patterns have no `|` alternation. A caller used to regex writes
+-- `DONE|progress`, which Lua reads as a literal pipe, so the monitor
+-- matches nothing and stays quiet until it exits. Catch that at start.
+-- `%|` still matches a literal pipe, so only a pipe that nothing escapes
+-- is the mistake.
+local function unescaped_pipe(pattern)
+  local from = 1
+  local pos = pattern:find("|", from, true)
+  while pos do
+    if pos == 1 or pattern:sub(pos - 1, pos - 1) ~= "%" then
+      return true
+    end
+    from = pos + 1
+    pos = pattern:find("|", from, true)
+  end
+  return false
 end
 
 -- One Lua runtime serves every session in the UI, so this table holds
@@ -170,6 +189,13 @@ maki.api.register_tool({
       if not ok then
         return {
           llm_output = "error: invalid match pattern: " .. tostring(match_err),
+          is_error = true,
+        }
+      end
+      if unescaped_pipe(input.match) then
+        return {
+          llm_output = "error: match is a Lua pattern with no `|` alternation; "
+            .. "use `%|` for a literal pipe or one monitor per pattern",
           is_error = true,
         }
       end
