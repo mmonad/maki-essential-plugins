@@ -2,7 +2,7 @@
 
 Lua plugins for [Maki](https://github.com/tontinton/maki):
 
-- `goal`: Run a session-scoped objective across bounded agent turns.
+- `goal`: Run a session-scoped objective across agent turns.
 - `monitor`: Watch a background command and report new output to its session.
 
 ## Install
@@ -16,16 +16,6 @@ maki.pack.add({ "https://github.com/laudney/maki-essential-plugins" })
 Maki installs managed packages in its XDG data directory, normally
 `~/.local/share/maki/site/pack/core/`. The package is loaded at startup. Maki
 will separately ask for the file and command permissions in `plugin.toml`.
-
-The goal plugin accepts an optional turn limit:
-
-```lua
-maki.setup({
-  plugins = {
-    ["maki-essential-plugins"] = { max_turns = 20 },
-  },
-})
-```
 
 Use `/packupdate maki-essential-plugins` to review updates.
 

@@ -22,8 +22,6 @@ local function goal(overrides)
     execution_id = "execution-1",
     objective = "Ship the feature",
     status = "active",
-    turns = 0,
-    max_turns = 3,
   }
   for key, value in pairs(overrides or {}) do
     record[key] = value
@@ -63,9 +61,6 @@ case("record_invariants", function()
   local _, objective_err = h.validate_record(goal({ objective = "  " }))
   assert(objective_err:find("objective", 1, true))
 
-  local _, turns_err = h.validate_record(goal({ turns = 4 }))
-  assert(turns_err:find("bound turns", 1, true))
-
   local _, timestamp_err = h.validate_record(goal({ created_at = -1 }))
   assert(timestamp_err:find("created_at", 1, true))
 
@@ -91,11 +86,10 @@ case("safe_session_filename", function()
 end)
 
 case("new_goal_and_resume_replace_execution", function()
-  local created = h.new_goal("goal-new", "execution-new", " Do it ", 5, 120)
+  local created = h.new_goal("goal-new", "execution-new", " Do it ", 120)
   eq(created.id, "goal-new")
   eq(created.execution_id, "execution-new")
   eq(created.created_at, 120)
-  eq(created.turns, 0)
   eq(created.status, "active")
   assert(h.validate_record(created))
 
@@ -107,8 +101,6 @@ case("new_goal_and_resume_replace_execution", function()
 
   local _, complete_err = h.resume(goal({ status = "complete", summary = "done" }), "execution-2")
   assert(complete_err:find("complete", 1, true))
-  local _, limit_err = h.resume(goal({ status = "paused", turns = 3 }), "execution-2")
-  assert(limit_err:find("turn limit", 1, true))
 end)
 
 case("pause_preserves_identity_and_rejects_complete_goal", function()
@@ -157,32 +149,11 @@ case("terminal_update_checks_identity_and_summary", function()
   assert(reblocked_err:find("blocked goal can only be completed", 1, true))
 end)
 
-case("turns_advance_only_matching_active_execution", function()
-  local advanced, continue = h.turn_end(goal(), "execution-1")
-  eq(advanced.turns, 1)
-  eq(advanced.status, "active")
-  eq(continue, true)
-
-  local current = goal()
-  local stale, stale_continue = h.turn_end(current, "old")
-  eq(stale, current)
-  eq(stale_continue, false)
-
-  local terminal = goal({ status = "complete", summary = "done" })
-  eq(h.turn_end(terminal, "execution-1"), terminal)
-end)
-
-case("turn_limit_pauses_without_continuation", function()
-  local paused, continue = h.turn_end(goal({ turns = 2 }), "execution-1")
-  eq(paused.turns, 3)
-  eq(paused.status, "paused")
-  assert(paused.summary:find("turn limit", 1, true))
-  eq(continue, false)
-
-  local already_at_limit = h.turn_end(goal({ turns = 3 }), "execution-1")
-  eq(already_at_limit.turns, 3)
-  eq(already_at_limit.status, "paused")
-  assert(h.validate_record(already_at_limit))
+case("continuation_requires_matching_active_execution", function()
+  assert(h.is_active(goal(), "execution-1"))
+  eq(h.is_active(goal(), "old"), false)
+  eq(h.is_active(goal({ status = "complete", summary = "done" }), "execution-1"), false)
+  eq(h.is_active(nil, "execution-1"), false)
 end)
 
 case("delivery_and_turn_errors_are_execution_fenced", function()
@@ -215,16 +186,16 @@ case("messages_delimit_and_escape_the_objective", function()
 end)
 
 case("format_puts_objective_first_and_identity_last", function()
-  local formatted = h.format(goal({ turns = 2 }), true)
+  local formatted = h.format(goal(), true)
   eq(
     formatted,
-    "Objective: Ship the feature\nStatus: active (interrupted; use /goal resume)\nTurns: 2/3\nGoal goal-1\nExecution: execution-1"
+    "Objective: Ship the feature\nStatus: active (interrupted; use /goal resume)\nGoal goal-1\nExecution: execution-1"
   )
 
   local completed = h.format(goal({ status = "complete", summary = "Shipped" }))
   eq(
     completed,
-    "Objective: Ship the feature\nStatus: complete\nTurns: 0/3\nSummary: Shipped\nGoal goal-1\nExecution: execution-1"
+    "Objective: Ship the feature\nStatus: complete\nSummary: Shipped\nGoal goal-1\nExecution: execution-1"
   )
 end)
 

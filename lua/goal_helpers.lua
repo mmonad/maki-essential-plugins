@@ -21,14 +21,11 @@ local GOAL_KEYS = {
   created_at = true,
   execution_id = true,
   id = true,
-  max_turns = true,
   objective = true,
   status = true,
   summary = true,
-  turns = true,
 }
 local MAX_SESSION_ID_BYTES = 128
-local TURN_LIMIT_SUMMARY = "Paused after reaching the turn limit."
 
 local function copy(record)
   local out = {}
@@ -52,7 +49,7 @@ local function integer(value)
 end
 
 local function matches_active(record, execution_id)
-  return record and record.status == "active" and record.execution_id == execution_id
+  return record ~= nil and record.status == "active" and record.execution_id == execution_id
 end
 
 function M.trim(value)
@@ -89,12 +86,6 @@ function M.validate_record(record)
   if not STATUSES[record.status] then
     return nil, "goal status is invalid"
   end
-  if not integer(record.turns) or record.turns < 0 then
-    return nil, "goal turns must be a non-negative integer"
-  end
-  if not integer(record.max_turns) or record.max_turns < 1 or record.turns > record.max_turns then
-    return nil, "goal max_turns must bound turns"
-  end
   if not integer(record.created_at) or record.created_at < 0 then
     return nil, "goal created_at must be a non-negative integer"
   end
@@ -130,15 +121,13 @@ function M.validate_document(document, session_id)
   return true
 end
 
-function M.new_goal(id, execution_id, objective, max_turns, created_at)
+function M.new_goal(id, execution_id, objective, created_at)
   return {
     created_at = created_at,
     id = id,
     execution_id = execution_id,
     objective = objective,
     status = "active",
-    turns = 0,
-    max_turns = max_turns,
   }
 end
 
@@ -154,9 +143,6 @@ end
 function M.resume(record, execution_id)
   if record.status == "complete" then
     return nil, "a complete goal cannot be resumed"
-  end
-  if record.turns >= record.max_turns then
-    return nil, "the goal reached its turn limit"
   end
   local resumed = copy(record)
   resumed.execution_id = execution_id
@@ -188,18 +174,8 @@ function M.terminal_update(record, goal_id, execution_id, status, summary)
   return terminal
 end
 
-function M.turn_end(record, execution_id)
-  if not matches_active(record, execution_id) then
-    return record, false
-  end
-  local next_record = copy(record)
-  next_record.turns = math.min(next_record.turns + 1, next_record.max_turns)
-  if next_record.turns >= next_record.max_turns then
-    next_record.status = "paused"
-    next_record.summary = TURN_LIMIT_SUMMARY
-    return next_record, false
-  end
-  return next_record, true
+function M.is_active(record, execution_id)
+  return matches_active(record, execution_id)
 end
 
 function M.turn_error(record, execution_id, message)
@@ -278,8 +254,7 @@ function M.format(record, interrupted)
     return "No goal is set for this session."
   end
   local status = interrupted and "active (interrupted; use /goal resume)" or record.status
-  local text =
-    string.format("Objective: %s\nStatus: %s\nTurns: %d/%d", record.objective, status, record.turns, record.max_turns)
+  local text = string.format("Objective: %s\nStatus: %s", record.objective, status)
   if record.summary then
     text = text .. "\nSummary: " .. record.summary
   end

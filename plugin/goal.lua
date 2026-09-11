@@ -5,10 +5,6 @@ local PHASE_DELIVERY = "delivery"
 local PHASE_RUNNING = "running"
 local PHASE_TRANSITION = "transition"
 
-local opts = maki.api.register_options({
-  max_turns = { default = 20, min = 1, desc = "Maximum agent turns for each goal." },
-})
-
 local semaphore = maki.async.semaphore(1)
 local state_directory
 local pending_executions = {}
@@ -224,7 +220,7 @@ local function start_goal(objective)
   if not session_id then
     return nil, session_err
   end
-  local record = helpers.new_goal(new_id("goal"), new_id("execution"), objective, opts.max_turns, os.time())
+  local record = helpers.new_goal(new_id("goal"), new_id("execution"), objective, os.time())
   clear_fences(session_id)
   local persisted, err = serialized(function()
     local state, state_err = load_state(session_id)
@@ -511,36 +507,17 @@ maki.api.create_autocmd("TurnEnd", {
           pending_executions[session_id] = nil
           error(state_err, 0)
         end
-        if not state.document then
-          pending_executions[session_id] = nil
-          return
-        end
         if pending_executions[session_id] ~= fence then
           return
         end
-        local current = state.document.goal
-        local advanced, continue = helpers.turn_end(current, fence.execution_id)
-        if advanced == current then
+        local current = state.document and state.document.goal
+        if not helpers.is_active(current, fence.execution_id) then
           pending_executions[session_id] = nil
           return
         end
-        local written, write_err = write_goal(state.path, session_id, advanced)
-        if not written then
-          if pending_executions[session_id] == fence then
-            pending_executions[session_id] = nil
-          end
-          error(write_err, 0)
-        end
-        if pending_executions[session_id] ~= fence then
-          return
-        end
-        if continue then
-          local delivered, delivery_err = deliver(session_id, advanced, helpers.continuation_message(advanced))
-          if not delivered then
-            error("continuation delivery failed: " .. delivery_err, 0)
-          end
-        else
-          pending_executions[session_id] = nil
+        local delivered, delivery_err = deliver(session_id, current, helpers.continuation_message(current))
+        if not delivered then
+          error("continuation delivery failed: " .. delivery_err, 0)
         end
       end)
     end)
