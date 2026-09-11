@@ -211,31 +211,16 @@ local function deliver(session_id, record, message)
   return nil, tostring(delivery_err)
 end
 
-local function focused_session(require_idle)
+local function focused_session()
   local session_id, current_err = maki.session.current()
   if not session_id then
     return nil, current_err
   end
-  if not require_idle then
-    return session_id
-  end
-  local live, live_err = maki.session.live()
-  if not live then
-    return nil, live_err
-  end
-  for _, session in ipairs(live) do
-    if session.id == session_id then
-      if session.status ~= "idle" then
-        return nil, "the focused session must be idle"
-      end
-      return session_id
-    end
-  end
-  return nil, "the focused session is not live"
+  return session_id
 end
 
 local function start_goal(objective)
-  local session_id, session_err = focused_session(true)
+  local session_id, session_err = focused_session()
   if not session_id then
     return nil, session_err
   end
@@ -260,7 +245,7 @@ local function start_goal(objective)
 end
 
 local function pause_goal()
-  local session_id, session_err = focused_session(false)
+  local session_id, session_err = focused_session()
   if not session_id then
     return nil, session_err
   end
@@ -287,7 +272,7 @@ local function pause_goal()
 end
 
 local function resume_goal()
-  local session_id, session_err = focused_session(true)
+  local session_id, session_err = focused_session()
   if not session_id then
     return nil, session_err
   end
@@ -318,7 +303,7 @@ local function resume_goal()
 end
 
 local function clear_goal()
-  local session_id, session_err = focused_session(false)
+  local session_id, session_err = focused_session()
   if not session_id then
     return nil, session_err
   end
@@ -342,7 +327,7 @@ local function command(command_opts)
   local session_id
   local record, err, was_interrupted
   if arg == "" then
-    session_id, err = focused_session(false)
+    session_id, err = focused_session()
     if session_id then
       record, err, was_interrupted = read_goal(session_id)
     end
