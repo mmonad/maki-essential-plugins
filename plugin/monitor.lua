@@ -202,7 +202,10 @@ maki.api.register_tool({
         local e = monitors[job_id]
         if e then
           monitors[job_id] = nil
-          maki.session.notify(string.format("[%s] exited with %d", e.label, code), { session = e.session })
+          maki.session.notify(
+            string.format("[%s] exited with %d", e.label, code),
+            { session = e.session, wake = e.wake }
+          )
         end
       end,
     })
