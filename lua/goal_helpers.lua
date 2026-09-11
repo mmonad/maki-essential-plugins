@@ -21,16 +21,25 @@ local GOAL_KEYS = {
   created_at = true,
   execution_id = true,
   id = true,
+  max_turns = true,
   objective = true,
   status = true,
   summary = true,
+  turns = true,
+}
+-- Removed with the turn limit, still accepted so goals saved before it load.
+local LEGACY_GOAL_KEYS = {
+  max_turns = true,
+  turns = true,
 }
 local MAX_SESSION_ID_BYTES = 128
 
 local function copy(record)
   local out = {}
   for key, value in pairs(record) do
-    out[key] = value
+    if not LEGACY_GOAL_KEYS[key] then
+      out[key] = value
+    end
   end
   return out
 end

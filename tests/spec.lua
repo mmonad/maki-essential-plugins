@@ -75,6 +75,21 @@ case("record_invariants", function()
   assert(terminal_err:find("non-empty summary", 1, true))
 end)
 
+case("legacy_turn_fields_load_and_are_dropped_on_rewrite", function()
+  local legacy = goal({
+    status = "paused",
+    summary = "Paused after reaching the turn limit.",
+    turns = 20,
+    max_turns = 20,
+  })
+  assert(h.validate_record(legacy))
+  assert(h.validate_document(document(legacy), "session"))
+
+  local resumed = assert(h.resume(legacy, "execution-2"))
+  eq(resumed.turns, nil)
+  eq(resumed.max_turns, nil)
+end)
+
 case("safe_session_filename", function()
   eq(h.session_filename("abc_DEF-123"), "abc_DEF-123.json")
   local _, empty_err = h.session_filename("")
