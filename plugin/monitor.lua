@@ -11,6 +11,12 @@ local monitors = {}
 -- each one gets a budget and then goes quiet with one line saying so.
 local MAX_LINES = 200
 
+local HINT_KEY = "Ctrl+M"
+-- A watched process can exit while the picker is open, so the rows are
+-- rebuilt on a tick; this is short enough that a stale row is gone before
+-- the person reading it acts on it.
+local TICK_MS = 250
+
 local SCHEMA = {
   type = "object",
   properties = {
@@ -98,6 +104,8 @@ end
 
 -- One hint slot serves the whole process, so it counts the monitors of
 -- the session in front of the person and follows focus when that moves.
+-- It reads like the task hint does: the count, then the key that opens
+-- the list, so "2 monitors Ctrl+M" says what runs and where to look.
 local function refresh_hint()
   local session = maki.session.current()
   local count = 0
@@ -106,8 +114,15 @@ local function refresh_hint()
       count = count + 1
     end
   end
-  local label = count == 1 and "1 monitor active" or string.format("%d monitors active", count)
-  maki.ui.set_status_hint(count > 0 and { { " " .. label .. " ", "foreground" } } or nil)
+  if count == 0 then
+    maki.ui.set_status_hint(nil)
+    return
+  end
+  maki.ui.set_status_hint({
+    { string.format(" %d %s ", count, count == 1 and "monitor" or "monitors"), "foreground" },
+    { HINT_KEY, "keybind_key" },
+    { " ", "" },
+  })
 end
 
 -- One Lua runtime serves every session in the UI, so this table holds
@@ -126,25 +141,39 @@ local function stop(id, session)
   return true
 end
 
--- The one description of what is running, so the palette and the model
--- never disagree about it. A {session} of nil lists every session's
--- monitors, which is the human's view of the machine and deliberately
--- not the model's. Ids come back out of a hash table in no order, and
--- sorting the rendered lines would put 10 before 2, so sort the ids.
-local function listing(session)
+-- The one description of what is running, so the picker and the model
+-- never disagree about it: both views render these rows, one with styles
+-- and one as plain text. Ids come back out of a hash table in no order,
+-- and sorting the rendered lines would put 10 before 2, so sort the ids.
+local function monitor_rows(session)
   local ids = {}
   for id, entry in pairs(monitors) do
-    if session == nil or entry.session == session then
+    if entry.session == session then
       ids[#ids + 1] = id
     end
   end
   table.sort(ids)
 
-  local lines = {}
+  local rows = {}
   for _, id in ipairs(ids) do
     local entry = monitors[id]
-    local line = string.format("%d  %s  %s", id, entry.label, one_line(entry.command))
-    if entry.capped then
+    rows[#rows + 1] = {
+      id = id,
+      label = entry.label,
+      command = one_line(entry.command),
+      capped = entry.capped,
+    }
+  end
+  return rows
+end
+
+-- The model reads plain lines, one per monitor, so the same facts reach
+-- it without any of the styles the picker draws.
+local function listing(session)
+  local lines = {}
+  for _, row in ipairs(monitor_rows(session)) do
+    local line = string.format("%d  %s  %s", row.id, row.label, row.command)
+    if row.capped then
       line = line .. string.format("  (quiet since %d lines)", MAX_LINES)
     end
     lines[#lines + 1] = line
@@ -319,24 +348,200 @@ maki.api.register_tool({
 
 -- The model is asked before a monitor starts, but the job outlives that
 -- one call, so the person who granted it needs a way to see what is
--- still running and to call it off.
+-- still running and to call it off. Ctrl+M opens this window too; the
+-- status hint points at it, the way the task hint points at Ctrl+X.
+--
+-- Like the tasks picker it shows the focused session, which is the one
+-- the hint counts: a monitor id means nothing outside the session it was
+-- started in, since monitor_stop cannot reach across sessions. The rows
+-- are rebuilt on a tick because a watched process can exit while the
+-- window is open, and a session switch closes it rather than leave
+-- another session's rows on screen.
+local picker = nil
+
+local function dispw(s)
+  return utf8.len(s) or #s
+end
+
+local function picker_index(id)
+  for i, row in ipairs(picker.rows) do
+    if row.id == id then
+      return i
+    end
+  end
+end
+
+local function picker_render()
+  local lines = {}
+  local cursor = 1
+  if #picker.rows == 0 then
+    lines[1] = { { "  No monitors running", "dim" } }
+  end
+  for _, row in ipairs(picker.rows) do
+    local selected = row.id == picker.sel_id
+    local base = selected and "selected" or "item"
+    local dim = selected and "selected" or "dim"
+    local spans = {
+      { "  ", base },
+      { tostring(row.id), dim },
+      { "  " .. row.label, selected and "selected" or "foreground" },
+    }
+    if row.capped then
+      spans[#spans + 1] = { string.format("  (quiet since %d lines)", MAX_LINES), dim }
+    end
+    spans[#spans + 1] = { "  " .. row.command, dim }
+    -- Rows with nothing on the right would otherwise end short of the
+    -- border and read as padding on one side only, so the bar runs the
+    -- full width, the way the task rows do.
+    local used = 0
+    for _, span in ipairs(spans) do
+      used = used + dispw(span[1])
+    end
+    local trail = picker.width - used
+    if trail > 0 then
+      spans[#spans + 1] = { string.rep(" ", trail), base }
+    end
+    lines[#lines + 1] = spans
+    if selected then
+      cursor = #lines
+    end
+  end
+  picker.buf:set_lines(lines)
+  picker.win:set_cursor(cursor)
+end
+
+local function picker_finish()
+  if not picker then
+    return
+  end
+  local closing = picker
+  picker = nil
+  closing.win:close()
+end
+
+-- Writing the buffer pulls the view back to the cursor, and the person
+-- may have scrolled away from it with the wheel, so a tick that finds
+-- the same rows has to leave the buffer alone.
+local function same_rows(a, b)
+  if #a ~= #b then
+    return false
+  end
+  for i = 1, #a do
+    local x, y = a[i], b[i]
+    if x.id ~= y.id or x.label ~= y.label or x.command ~= y.command or x.capped ~= y.capped then
+      return false
+    end
+  end
+  return true
+end
+
+local function picker_refresh()
+  local rows = monitor_rows(picker.session)
+  if same_rows(rows, picker.rows) then
+    return
+  end
+  local previous = picker_index(picker.sel_id) or 1
+  picker.rows = rows
+  local index = math.min(previous, #picker.rows)
+  picker.sel_id = picker.rows[index] and picker.rows[index].id or nil
+  picker_render()
+end
+
+local function picker_move(delta, wrap)
+  local count = #picker.rows
+  if count == 0 then
+    return
+  end
+  local current = picker_index(picker.sel_id) or 1
+  local index
+  if wrap then
+    index = (current - 1 + delta) % count + 1
+  else
+    index = math.min(math.max(current + delta, 1), count)
+  end
+  picker.sel_id = picker.rows[index].id
+  picker_render()
+end
+
+local function picker_key(key)
+  local page = math.max(picker.height - 2, 1)
+  if key == "esc" or key == "ctrl+c" or key == "ctrl+m" then
+    picker_finish()
+  elseif key == "up" then
+    picker_move(-1, true)
+  elseif key == "down" then
+    picker_move(1, true)
+  elseif key == "pageup" then
+    picker_move(-page, false)
+  elseif key == "pagedown" then
+    picker_move(page, false)
+  end
+end
+
+local function open_picker()
+  if picker then
+    return
+  end
+  local session = maki.session.current()
+  local rows = monitor_rows(session)
+  if #rows == 0 then
+    maki.ui.flash("no monitors running")
+    return
+  end
+  local buf = maki.ui.buf()
+  local win = maki.ui.open_win(buf, {
+    title = " Monitors ",
+    width = "70%",
+    height = "70%",
+    border = "rounded",
+    focus = true,
+    footer = { { "Esc", "close" } },
+  })
+  picker = {
+    session = session,
+    win = win,
+    buf = buf,
+    width = win.width,
+    height = win.height,
+    rows = rows,
+    sel_id = rows[1].id,
+  }
+  picker_render()
+
+  while picker do
+    local ev = picker.win:recv(TICK_MS)
+    if not ev or ev.type == "close" then
+      -- The window is already gone, so there is nothing left to close.
+      picker = nil
+    elseif ev.type == "timeout" then
+      if picker.expired then
+        picker_finish()
+      else
+        picker_refresh()
+      end
+    elseif ev.type == "key" then
+      picker_key(ev.key)
+    elseif ev.type == "resize" then
+      picker.width = ev.width
+      picker.height = ev.height
+      picker_render()
+    end
+  end
+end
+
 maki.api.register_command({
   name = "/monitors",
   description = "List running monitors",
-  handler = function()
-    local lines = listing(nil)
-    if #lines == 0 then
-      maki.ui.flash("no monitors running")
-      return
-    end
-    maki.ui.flash(table.concat(lines, "\n"))
-  end,
+  handler = open_picker,
 })
 
 local function stop_session(ev)
   local session = ev.data and ev.data.session_id
   if not session then
     return
+  end
+  if picker and picker.session == session then
+    picker.expired = true
   end
   for id, entry in pairs(monitors) do
     if entry.session == session then
@@ -348,4 +553,20 @@ local function stop_session(ev)
 end
 
 maki.api.create_autocmd("SessionEnd", { callback = stop_session })
-maki.api.create_autocmd("SessionFocusChanged", { callback = refresh_hint })
+
+-- The picker shows the focused session's monitors, so a switch closes it
+-- instead of leaving another session's rows on screen; the hint has to
+-- follow focus either way.
+maki.api.create_autocmd("SessionFocusChanged", {
+  callback = function()
+    if picker then
+      picker.expired = true
+    end
+    refresh_hint()
+  end,
+})
+
+-- A terminal reports Ctrl+M apart from Enter only when it speaks the
+-- Kitty keyboard protocol, which maki asks for at startup. Where it does
+-- not, the key arrives as Enter and its usual binding still works.
+maki.keymap.set("n", "<C-m>", open_picker, { desc = "Open monitors" })

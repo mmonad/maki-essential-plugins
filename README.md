@@ -4,6 +4,7 @@ Lua plugins for [Maki](https://github.com/tontinton/maki):
 
 - `goal`: Run a session-scoped objective across agent turns.
 - `monitor`: Watch a background command and report new output to its session.
+  `/monitors` or Ctrl+M opens the list of running monitors.
 
 ## Install
 
