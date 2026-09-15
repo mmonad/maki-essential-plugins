@@ -30,12 +30,16 @@ local SCHEMA = {
     },
     match = {
       type = "string",
-      description = "Lua pattern. When set, only matching lines are reported. "
-        .. "Lua has no `|` alternation; write `%|` for a literal pipe.",
+      description = "Lua pattern. When set, only matching lines are reported, "
+        .. "which with wake on is also what keeps a line-per-run flood from "
+        .. "happening. Lua has no `|` alternation; write `%|` for a literal pipe.",
     },
     wake = {
       type = "boolean",
-      description = "Interrupt an idle agent instead of waiting for the next turn. Off by default; use it only for events worth stopping for.",
+      description = "Let a matching line or the exit start a new run, so the "
+        .. "session resumes with nobody typing. Set it when the result is what "
+        .. "you are waiting for. Off by default, because each reported line can "
+        .. "start a run; pair it with match.",
     },
   },
   required = { "command" },
@@ -197,10 +201,14 @@ end
 
 maki.api.register_tool({
   name = "monitor",
-  description = "Watch a command in the background and report what it prints. "
-    .. "Returns straight away; lines arrive later, with the next turn. "
-    .. "Use it for a dev server, a test watcher, or a deploy, when you want "
-    .. "to know what happened without asking again. Stop it with monitor_stop.",
+  description = "Watch a long-running command and be told what it prints, so "
+    .. "you can end your turn instead of waiting inside it. Returns at once; "
+    .. "nothing blocks. Set wake = true when the result is what you are waiting "
+    .. "for: a matching line or the exit then starts a new run, and the session "
+    .. "resumes with nobody typing. Pair wake with match, or every reported "
+    .. "line costs a run. Use this instead of `sleep` and repeated checks, for "
+    .. "a build, a test run, a deploy, or a dev server. Without wake, lines "
+    .. "wait for the next turn. Stop it with monitor_stop.",
   schema = SCHEMA,
   -- Starting a job needs the `run` permission, which a bundled plugin
   -- already has. That covers the plugin, not the command: without a scope
@@ -296,8 +304,28 @@ maki.api.register_tool({
 
     monitors[id] = entry
     refresh_hint()
-    return string.format("%s watching `%s` (id %d)", entry.label, command, id)
+    -- The model decides what to do next while it reads this line, so the
+    -- answer says what that next step is. Told only that a monitor is
+    -- running, a model waits for it inside the turn, which is the pattern
+    -- this tool exists to replace.
+    local note = "Lines wait for the next turn."
+    if entry.wake then
+      note = "End your turn; a matching line or the exit resumes this session."
+    end
+    return string.format("%s watching `%s` (id %d). %s", entry.label, command, id, note)
   end,
+})
+
+-- Waiting inside a turn with `sleep` and a check is the pattern a model
+-- reaches for first, and a tool description alone does not answer it: the
+-- habit comes from outside this session, and the tool list is where the
+-- session can speak to it.
+maki.api.register_prompt_hint({
+  slot = "tool_usage",
+  content = "- For a command that runs longer than a few seconds (build, test "
+    .. "suite, deploy, server), start a monitor with wake = true and match, "
+    .. "then end your turn; the notice resumes the session. Never `sleep` to "
+    .. "wait for a command.",
 })
 
 maki.api.register_tool({
